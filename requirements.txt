@@ -1,0 +1,13 @@
+Flask==0.10.1
+hirlite==0.1.1
+itsdangerous==0.24
+Jinja2==2.8
+MarkupSafe==0.23
+psutil==3.4.2
+redis==2.10.5
+redislite==3.0.271
+requests==2.9.1
+uWSGI==2.0.12
+walrus==0.3.4
+Werkzeug==0.11.3
+wheel==0.24.0

@@ -56,29 +56,29 @@ def create_app():
                 print send
                 if send == 1:
                     return "reset the game"
-
-    @app.route("/join", methods=["POST"])
-    def player_join():
-        if g.auth:
-            current_game = game.Game.load(1)
-            current_game.add_player(g.user_name)
-            current_game.save()
+                return None
 
 
     @app.route("/action", methods=["POST"])
     def player_action():
         if g.auth:
             current_game = game.Game.load(1)
-            game_action = 0
-            if g.action == "#p":
+            game_action = None
+            if g.action == "!p":
                 game_action = current_game.player_choice(g.user_name, g.action)
-            elif g.action == "#d":
+                if game_action != 1:
+                    payload(game_action)
+            elif g.action == "!d":
                 game_action = current_game.player_choice(g.user_name, g.action)
-            elif g.action == "#join":
+                if game_action != -1:
+                    payload(game_action)
+            elif g.action == "!join":
                 game_action = current_game.add_player(g.user_name)
-            elif g.action == "#leave":
+                payload(game_action)
+            elif g.action == "!leave":
                 game_action = current_game.remove_player(g.user_name)
-            elif g.action == "#stats":
+                payload(game_action)
+            elif g.action == "!stats":
                 player = None
                 try:
                     player = game.Player.load(g.user_name)
@@ -86,14 +86,39 @@ def create_app():
                     print e
                 if player is not None:
                     player_stats = str(player)
-                    send = payload(player_stats)
+                    payload(player_stats)
+                    game_action = player_stats
+            elif g.action == "!game":
+                current_game_stats = str(current_game)
+                payload(current_game_stats)
+
+            elif g.action == "!help":
+                messages = (
+                    "*commands:*",
+                    "`!join` -> join the game",
+                    "`!leave` -> leave the game",
+                    "`!stats` -> your current stats (bankroll)",
+                    "`!game` -> view current game info",
+                    "`!p` -> place a *pass bet*",
+                    "`!d` -> place a *do not pass bet*",
+                    "`!roll` -> roll the dice. will only be accepted if you are the game's roller",
+                )
+                messages = "\n".join(messages)
+                payload(messages)
             else:
                 pass
-            if game_action > 0:
+
+            if game_action:
                 current_game.save()
+                if game_action in (1,-1):
+                    return str(game_action)
+                return game_action
+            else:
+                return "game not saved"
 
     @app.route("/roll", methods=["POST"])
     def roll_dice():
+        ret = None
         if g.auth:
             current_game = game.Game.load(1)
             if g.user_name == str(current_game.roller):
@@ -104,7 +129,8 @@ def create_app():
                 current_game.save()
                 send = payload(rolled)
                 if send == 1:
-                    print "valid roll"
+                    ret = "valid roll"
+        return ret
 
     return app
 

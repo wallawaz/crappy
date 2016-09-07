@@ -8,9 +8,6 @@ MATTERMOST_INCOMING = "INCOMING_WEBHOOK_URL"
 # Value = POST token
 ENDPOINTS = {
     "/reset": ("XXX"),
-    "/join": ("XXY"),
-    "/action": ("XYY")
+    "/action": ("XYY"),
     "/roll": ("XYX"),
     }
-
-

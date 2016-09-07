@@ -1,0 +1,7 @@
+*.pyc
+*.rld
+*.ini
+*.bak
+*.settings
+mattermost_bot_env/*
+constants/*.py

@@ -112,33 +112,54 @@ class Game(walrus.Model):
     player_passes = SetField()
     player_do_not_passes = SetField()
 
+    def __str__(self):
+        players_str = "*players:* " + ",".join(self.players)
+        come_in_str = "*come in roll:* " + str(self.come_in)
+        if not self.come_in:
+            come_in_str += "\n*game point:* " + str(self.game_point)
+        roller_str = "*roller:* " + self.roller
+        player_passes_str = "*pass bets:* " + ",".join(self.player_passes)
+        player_do_not_passes_str = "*do not pass bets:* " + ",".join(self.player_do_not_passes)
+
+        ret = [ players_str, come_in_str, roller_str, player_passes_str, player_do_not_passes_str]
+        return "\n".join(ret)
+
     def add_player(self, player_name):
         if player_name in self.players:
-            return 0
-        player = Player(name=player_name)
+            return "%s already in the game" % player_name
+        try:
+            player = Player.load(player_name)
+        except KeyError:
+            player = Player(name=player_name)
+
         self.players.add(player_name)
-        return 1
+        self.players.save()
+        return "%s added to game" % player_name
 
     def remove_player(self, player_name):
         if player_name not in self.players:
-            return 0
+            return "%s was not in the game" % player_name
         self.players.remove(player_name)
-        return 1
+        self.players.save()
+        return "%s removed from the game" % player_name
 
     def player_choice(self, player_name, choice):
         if player_name not in self.players:
-            return 0
-        if choice == "#p":
+            return "@{pn} please join the game to make a bet".format(pn=player_name)
+        if choice == "!p":
             if player_name not in self.player_do_not_passes:
                 self.player_passes.add(player_name)
                 return 1
-        if choice == "#d":
+            return "{pn} already chose _DO_NOT_PASS_".format(pn=player_name)
+
+        if choice == "!d":
             if player_name not in self.player_passes:
                 self.player_do_not_passes.add(player_name)
-                return 1
-        return 0
+                return -1
+            return "{pn} already chose _PASS_".format(pn=player_name)
+        return "derp"
 
-    def reset_game(self, crapped=False):
+    def reset_game(self, new_roller=False):
         self.come_in = True
         self.roll = None
         self.game_point = 0
@@ -146,19 +167,19 @@ class Game(walrus.Model):
         # reset all players
         pp = list(self.player_passes.members())
         for p in pp:
-            print p
             self.player_passes.remove(p)
         pdnp = list(self.player_do_not_passes.members())
         for p in pdnp:
             self.player_do_not_passes.remove(p)
 
-        if crapped:
-            return self.get_new_roller()
+        if new_roller:
+            new_roller_message = self.get_new_roller()
+            return new_roller_message
 
     def get_new_roller(self):
         player = random.choice(list(self.players))
         self.roller = player
-        msg = u"@{u} is the new roller\n@{u} Type #roll when ready to start a new round.".format(u=self.roller)
+        msg = u"@{u} is the new roller\n@{u} Type !roll when ready to start a new round.".format(u=self.roller)
         return msg
 
     def choices(self):
@@ -167,7 +188,7 @@ class Game(walrus.Model):
             msg += str(p).encode("utf8")
             msg += u"\n"
 
-        msg += u"Before the next roll enter:\n`#p` for PASS\n`#d` for DO NOT PASS"
+        msg += u"Before the next roll enter:\n`!p` for PASS\n`!d` for DO NOT PASS"
         return msg
 
     def crapped(self):
@@ -187,6 +208,7 @@ class Game(walrus.Model):
         reply = u"\n"
 
         for player_name in self.players:
+            player_name = str(player_name)
             player = Player.load(player_name)
             reply += str(player) + ' ^ ' + str(self.minimum_bet)
 
@@ -208,6 +230,10 @@ class Game(walrus.Model):
                     reply = reply.replace(u"^", u"-")
             reply += "\n"
             player.save()
+
+        if not true_pass:
+            new_player_message = self.reset_game(new_roller=True)
+            reply += new_player_message + "\n"
         return reply
 
 
@@ -227,7 +253,7 @@ class Game(walrus.Model):
 
             elif roll.point in DO_NOT_PASS:
                 reply += self.winners_losers(true_pass=False)
-                self.reset_game()
+                self.reset_game(new_roller=True)
 
             else:
                 self.game_point = int(roll.point)
@@ -259,14 +285,14 @@ class Game(walrus.Model):
 
 
 def create_game():
-    g = Game.create()
+    game = Game.create()
     for name, bank_roll in ADMINS:
         p = Player.create(name=name, bank_roll=bank_roll)
-        g.players.add(name)
+        game.players.add(name)
         p.save()
-    roller = random.choice(list(g.players))
-    g.roller = roller
-    g.save()
+    roller = random.choice(list(game.players))
+    game.roller = roller
+    game.save()
 
 def clear_games():
     pass

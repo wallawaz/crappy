@@ -22,7 +22,7 @@ def create_app():
             content = r.content
         except Exception as e:
             return e
-        return 1
+        return content
 
     @app.before_request
     def check_token():
@@ -50,13 +50,13 @@ def create_app():
                     game.create_game()
                     current_game = game.Game.load(1)
 
-                new_roller = current_game.reset_game(crapped=True)
+                new_roller = current_game.reset_game(new_roller=True)
                 send = payload(new_roller)
                 current_game.save()
                 print send
                 if send == 1:
                     return "reset the game"
-                return None
+                return "derp"
 
 
     @app.route("/action", methods=["POST"])
@@ -64,24 +64,26 @@ def create_app():
         if g.auth:
             current_game = game.Game.load(1)
             game_action = None
+            player_name = str(g.user_name)
+
             if g.action == "!p":
-                game_action = current_game.player_choice(g.user_name, g.action)
-                if game_action != 1:
+                game_action = current_game.player_choice(player_name, g.action)
+                if game_action != "pass":
                     payload(game_action)
             elif g.action == "!d":
-                game_action = current_game.player_choice(g.user_name, g.action)
-                if game_action != -1:
+                game_action = current_game.player_choice(player_name, g.action)
+                if game_action != "do_not_pass":
                     payload(game_action)
             elif g.action == "!join":
-                game_action = current_game.add_player(g.user_name)
+                game_action = current_game.add_player(player_name)
                 payload(game_action)
             elif g.action == "!leave":
-                game_action = current_game.remove_player(g.user_name)
+                game_action = current_game.remove_player(player_name)
                 payload(game_action)
             elif g.action == "!stats":
                 player = None
                 try:
-                    player = game.Player.load(g.user_name)
+                    player = game.Player.load(player_name)
                 except Exception as e:
                     print e
                 if player is not None:
@@ -91,7 +93,7 @@ def create_app():
             elif g.action == "!game":
                 current_game_stats = str(current_game)
                 payload(current_game_stats)
-
+                game_action = current_game_stats
             elif g.action == "!help":
                 messages = (
                     "*commands:*",
@@ -105,30 +107,32 @@ def create_app():
                 )
                 messages = "\n".join(messages)
                 payload(messages)
+                game_action = messages
             else:
                 pass
 
-            if game_action:
-                current_game.save()
-                if game_action in (1,-1):
-                    return str(game_action)
+            saving_actions = ("!p", "!d", "!join", "!leave")
+            if g.action in saving_actions and game_action:
+                #current_game = current_game.save()
                 return game_action
             else:
                 return "game not saved"
 
     @app.route("/roll", methods=["POST"])
     def roll_dice():
-        ret = None
+        ret = "nothing"
         if g.auth:
             current_game = game.Game.load(1)
-            if g.user_name == str(current_game.roller):
-                if current_game.come_in:
+            if str(g.user_name) == str(current_game.roller):
+                print "valid roller"
+                if current_game.rolls == 0:
+                    print "first roll"
                     rolled = current_game.first_roll()
                 else:
                     rolled = current_game.keep_goin()
                 current_game.save()
                 send = payload(rolled)
-                if send == 1:
+                if send:
                     ret = "valid roll"
         return ret
 

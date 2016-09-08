@@ -105,17 +105,18 @@ class Game(walrus.Model):
     id = IntegerField(primary_key=True, default=1)
     players = SetField()
     minimum_bet = IntegerField(default=10)
-    come_in = BooleanField(default=True)
-    #roll = TextField()
     game_point = IntegerField(default=0)
+    rolls = IntegerField(default=0)
     roller = TextField()
     player_passes = SetField()
     player_do_not_passes = SetField()
 
     def __str__(self):
         players_str = "*players:* " + ",".join(self.players)
-        come_in_str = "*come in roll:* " + str(self.come_in)
-        if not self.come_in:
+        come_in_str = ""
+        if self.rolls < 1:
+            come_in_str = "*_COME_IN_*"
+        if self.rolls >= 1:
             come_in_str += "\n*game point:* " + str(self.game_point)
         roller_str = "*roller:* " + self.roller
         player_passes_str = "*pass bets:* " + ",".join(self.player_passes)
@@ -149,20 +150,20 @@ class Game(walrus.Model):
         if choice == "!p":
             if player_name not in self.player_do_not_passes:
                 self.player_passes.add(player_name)
-                return 1
-            return "{pn} already chose _DO_NOT_PASS_".format(pn=player_name)
+                return "pass"
+            return "{pn} already chose _do_not_pass_".format(pn=player_name)
 
         if choice == "!d":
             if player_name not in self.player_passes:
                 self.player_do_not_passes.add(player_name)
-                return -1
-            return "{pn} already chose _PASS_".format(pn=player_name)
+                return "do_not_pass"
+            return "{pn} already chose _pass_".format(pn=player_name)
         return "derp"
 
     def reset_game(self, new_roller=False):
-        self.come_in = True
         self.roll = None
         self.game_point = 0
+        self.rolls = 0
 
         # reset all players
         pp = list(self.player_passes.members())
@@ -192,11 +193,11 @@ class Game(walrus.Model):
         return msg
 
     def crapped(self):
-        self.reset_game(crapped=True)
+        self.reset_game(new_roller=True)
         return u"\n {}".format(OUTCOMES["CRAPPED"])
 
     def rolled_point(self):
-        self.reset_game(crapped=False)
+        self.reset_game(new_roller=False)
         return u"\n {}".format(OUTCOMES["WIN"])
 
     #def player_check(self):
@@ -205,36 +206,40 @@ class Game(walrus.Model):
     #        sys.exit(5)
 
     def winners_losers(self, true_pass=True):
-        reply = u"\n"
+        full_reply = u"\n"
 
         for player_name in self.players:
             player_name = str(player_name)
             player = Player.load(player_name)
-            reply += str(player) + ' ^ ' + str(self.minimum_bet)
+            ret = None
+            reply = str(player) + ' ^ ' + str(self.minimum_bet)
 
             if true_pass:
                 if player.name in self.player_passes:
                     player.win(self.minimum_bet)
-                    reply = reply.replace(u"^",u"+")
+                    ret = reply.replace(u"^",u"+")
                 if player.name in self.player_do_not_passes:
                     player.lose(self.minimum_bet)
-                    reply = reply.replace(u"^",u"-")
+                    ret = reply.replace(u"^",u"-")
 
             if not true_pass:
                 if player.name in self.player_do_not_passes:
                     player.win(self.minimum_bet)
-                    reply = reply.replace(u"^",u"+")
+                    ret = reply.replace(u"^",u"+")
 
                 if player.name in self.player_passes:
                     player.lose(self.minimum_bet)
-                    reply = reply.replace(u"^", u"-")
-            reply += "\n"
-            player.save()
+                    ret = reply.replace(u"^", u"-")
 
+            if ret:
+                full_reply += ret + "\n"
+                player.save()
+
+        # change rollers more often
         if not true_pass:
             new_player_message = self.reset_game(new_roller=True)
-            reply += new_player_message + "\n"
-        return reply
+            full_reply += new_player_message + "\n"
+        return full_reply
 
 
     def first_roll(self):
@@ -242,10 +247,10 @@ class Game(walrus.Model):
         if not self.roller:
             self.get_new_roller()
 
-        if self.come_in:
+        if self.rolls == 0:
             roll = Roll()
+            self.rolls += 1
             reply += str(roll).decode("utf8")
-            self.come_in = False
 
             if roll.point in PASS:
                 reply += self.winners_losers()
@@ -264,6 +269,7 @@ class Game(walrus.Model):
     def keep_goin(self):
         reply = u""
         roll = Roll()
+        self.rolls += 1
         reply += str(roll).decode("utf8")
 
         reply += u"\nROLLING FOR %s" % NUMBERS[self.game_point]

@@ -37,16 +37,22 @@ def create_app():
         g.user_name = str(form["user_name"])
         # used for /action post
         g.action = str(form["trigger_word"])
+        g.text = str(form["text"])
+
+        g.is_admin = False
+        admins = [ admin_name for admin_name, admin_bank_roll in game.ADMINS ]
+        if g.user_name in admins:
+            g.is_admin = True
+
 
     @app.route("/reset", methods=["POST"])
     def reset():
         if g.auth:
-            # check if reset command was issued by admin
-            admins = [ admin_name for admin_name, admin_bank_roll in game.ADMINS ]
-            if g.user_name in admins:
+            if g.is_admin:
                 try:
                     current_game = game.Game.load(1)
                 except KeyError:
+                    print "NEW GAME"
                     game.create_game()
                     current_game = game.Game.load(1)
 
@@ -54,9 +60,22 @@ def create_app():
                 send = payload(new_roller)
                 current_game.save()
                 print send
-                if send == 1:
+                if send == "ok":
                     return "reset the game"
                 return "derp"
+
+    def find_extra_bet(text):
+        words = text.split()
+        amount = None
+        for word in words:
+            try:
+                amount = int(word)
+            except ValueError:
+                pass
+            if amount:
+                return amount
+
+        return 0
 
 
     @app.route("/action", methods=["POST"])
@@ -67,19 +86,25 @@ def create_app():
             player_name = str(g.user_name)
 
             if g.action == "!p":
-                game_action = current_game.player_choice(player_name, g.action)
-                if game_action != "pass":
-                    payload(game_action)
+                extra_bet = find_extra_bet(g.text)
+
+                game_action = current_game.player_choice(player_name, g.action, extra_bet=extra_bet)
+                payload(game_action)
+
             elif g.action == "!d":
-                game_action = current_game.player_choice(player_name, g.action)
-                if game_action != "do_not_pass":
-                    payload(game_action)
+                extra_bet = find_extra_bet(g.text)
+
+                game_action = current_game.player_choice(player_name, g.action, extra_bet=extra_bet)
+                payload(game_action)
+
             elif g.action == "!join":
                 game_action = current_game.add_player(player_name)
                 payload(game_action)
+
             elif g.action == "!leave":
                 game_action = current_game.remove_player(player_name)
                 payload(game_action)
+
             elif g.action == "!stats":
                 player = None
                 try:
@@ -87,9 +112,22 @@ def create_app():
                 except Exception as e:
                     print e
                 if player is not None:
+                    active_bets = "active bets: "
+                    current_game = game.Game.load(1)
+                    if player_name in current_game.player_passes:
+                        active_bets += "*pass*"
+                    if player_name in current_game.player_do_not_passes:
+                        active_bets += "*do_not_pass*"
+
+
+                    if player.extra_bet is not None and player.extra_bet > 0:
+                        active_bets += "\n+$%s" % player.extra_bet
+
                     player_stats = str(player)
+                    player_stats += " " + active_bets
                     payload(player_stats)
                     game_action = player_stats
+
             elif g.action == "!game":
                 current_game_stats = str(current_game)
                 payload(current_game_stats)
@@ -113,7 +151,8 @@ def create_app():
 
             saving_actions = ("!p", "!d", "!join", "!leave")
             if g.action in saving_actions and game_action:
-                #current_game = current_game.save()
+                #XXX
+                #current_game.save()
                 return game_action
             else:
                 return "game not saved"
@@ -130,9 +169,9 @@ def create_app():
                     rolled = current_game.first_roll()
                 else:
                     rolled = current_game.keep_goin()
-                current_game.save()
                 send = payload(rolled)
-                if send:
+                if rolled:
+                    current_game.save()
                     ret = "valid roll"
         return ret
 

@@ -89,9 +89,10 @@ class Player(walrus.Model):
     database = db
     name = TextField(primary_key=True)
     bank_roll = IntegerField(default=100)
+    extra_bet = IntegerField(default=0)
 
     def __repr__(self):
-        return u"%s: $%d" % (self.name, self.bank_roll)
+        return u"%s: Bank$: %d" % (self.name, self.bank_roll)
 
     def win(self, bet):
         self.bank_roll += bet
@@ -103,9 +104,10 @@ class Player(walrus.Model):
 class Game(walrus.Model):
     database = db
     id = IntegerField(primary_key=True, default=1)
-    players = SetField()
+    players = ListField()
     minimum_bet = IntegerField(default=10)
     game_point = IntegerField(default=0)
+    rolling_position = IntegerField(default=1)
     rolls = IntegerField(default=0)
     roller = TextField()
     player_passes = SetField()
@@ -131,57 +133,136 @@ class Game(walrus.Model):
         try:
             player = Player.load(player_name)
         except KeyError:
-            player = Player(name=player_name)
+            player = Player(name=player_name, extra_bet=0)
+            player.save()
 
-        self.players.add(player_name)
-        self.players.save()
+        self.players.append(player_name)
         return "%s added to game" % player_name
 
     def remove_player(self, player_name):
+
+        def redis_pop_element(redis_list, element):
+            new_list = list()
+            for i in range(len(redis_list)):
+                x = redis_list.popleft()
+                if x != element:
+                    new_list.append(x)
+
+            for i in new_list:
+                redis_list.append(i)
+
         if player_name not in self.players:
             return "%s was not in the game" % player_name
-        self.players.remove(player_name)
-        self.players.save()
+
+        if player_name == self.roller and self.game_point is not None \
+            and self.game_point > 0:
+            return "%s cannot leave the game while an active roller" % player_name
+
+        self.player_passes.remove(player_name)
+        self.player_do_not_passes.remove(player_name)
+        redis_pop_element(self.players, player_name)
+
+        # remove the Player's extra bets
+        player = Player.load(player_name)
+        player.extra_bet = 0
+        player.save()
+
+        if self.roller == player_name:
+            self.get_new_roller()
         return "%s removed from the game" % player_name
 
-    def player_choice(self, player_name, choice):
+    def player_choice(self, player_name, choice, extra_bet=None):
         if player_name not in self.players:
             return "@{pn} please join the game to make a bet".format(pn=player_name)
+
         if choice == "!p":
+            bet = "*pass*"
             if player_name not in self.player_do_not_passes:
+
+                if player_name in self.player_passes:
+                    if extra_bet:
+                        player = Player.load(player_name)
+                        player.extra_bet += extra_bet
+                        player.save()
+                        return "{pn} added {x} to their bet".format(pn=player_name, x=extra_bet)
+
+                    else:
+                        return "{pn} already made {bet} bet".format(pn=player_name, bet=bet)
+
                 self.player_passes.add(player_name)
-                return "pass"
-            return "{pn} already chose _do_not_pass_".format(pn=player_name)
+
+                if len(self.player_passes) == 1:
+                    return "{pn} made the first {bet} bet".format(pn=player_name, bet=bet)
+                else:
+                    pass_members = ",".join(self.player_passes)
+                    return "{pn} joined ({m}) in making a {bet} bet".format(pn=player_name, m=pass_members, bet=bet)
+            else:
+                return "{pn} already chose _do_not_pass_".format(pn=player_name)
 
         if choice == "!d":
+            bet = "*do not pass*"
             if player_name not in self.player_passes:
+
+                if player_name in self.player_do_not_passes:
+                    if extra_bet:
+                        player = Player.load(player_name)
+                        player.extra_bet += extra_bet
+                        player.save()
+                        return "{pn} added {x} to their bet".format(pn=player_name, x=extra_bet)
+                    else:
+                        return "{pn} already made {bet} bet".format(pn=player_name, bet=bet)
+
                 self.player_do_not_passes.add(player_name)
-                return "do_not_pass"
-            return "{pn} already chose _pass_".format(pn=player_name)
+
+                if len(self.player_do_not_passes) == 1:
+                    return "{pn} made first {bet} bet".format(pn=player_name, bet=bet)
+
+                else:
+                    do_not_pass_members = ",".join(self.do_not_pass_members)
+                    return "{pn} joined ({m}) in making a {bet} bet".format(pn=player_name, m=do_not_pass_members, bet=bet)
+            else:
+                return "{pn} already chose _pass_".format(pn=player_name)
+
         return "derp"
 
     def reset_game(self, new_roller=False):
+        print "RESETTING GAME"
         self.roll = None
         self.game_point = 0
         self.rolls = 0
 
         # reset all players
-        pp = list(self.player_passes.members())
-        for p in pp:
-            self.player_passes.remove(p)
-        pdnp = list(self.player_do_not_passes.members())
-        for p in pdnp:
-            self.player_do_not_passes.remove(p)
+        all_players = self.players
+
+        for p in all_players:
+            player = Player.load(p)
+            player.extra_bet = 0
+            print "__PLAYER__"
+            print player
+            player.save()
+
+            if p in self.player_passes:
+                self.player_passes.remove(p)
+            if p in self.player_do_not_passes:
+                self.player_do_not_passes.remove(p)
 
         if new_roller:
-            new_roller_message = self.get_new_roller()
+            new_roller, new_roller_message = self.get_new_roller()
+            self.roller = new_roller
             return new_roller_message
+        return "new round"
+
 
     def get_new_roller(self):
-        player = random.choice(list(self.players))
-        self.roller = player
-        msg = u"@{u} is the new roller\n@{u} Type !roll when ready to start a new round.".format(u=self.roller)
-        return msg
+        # we start rolling position at 1 for redis IntegerField
+        if self.rolling_position + 1 > len(self.players):
+            self.rolling_position = 1
+        else:
+            self.rolling_position += 1
+
+        player = self.players[self.rolling_position - 1]
+        msg = u"@{u} is the new roller\n{u} type `!roll` when ready to start a new round.".format(u=player)
+        return (player, msg)
 
     def choices(self):
         msg = u""
@@ -216,24 +297,44 @@ class Game(walrus.Model):
 
             if true_pass:
                 if player.name in self.player_passes:
-                    player.win(self.minimum_bet)
-                    ret = reply.replace(u"^",u"+")
+                    if player.extra_bet > 0:
+                        player.win(self.minimum_bet + player.extra_bet)
+                        ret = reply.replace(u"^",u"+") + " + " + str(player.extra_bet)
+                    else:
+                        player.win(self.minimum_bet)
+                        ret = reply.replace(u"^",u"+")
+
                 if player.name in self.player_do_not_passes:
-                    player.lose(self.minimum_bet)
-                    ret = reply.replace(u"^",u"-")
+                    if player.extra_bet > 0:
+                        player.lose(self.minimum_bet + player.extra_bet)
+                        ret = reply.replace(u"^",u"-") + " - " + str(player.extra_bet)
+                    else:
+                        player.lose(self.minimum_bet)
+                        ret = reply.replace(u"^",u"-")
 
             if not true_pass:
                 if player.name in self.player_do_not_passes:
-                    player.win(self.minimum_bet)
-                    ret = reply.replace(u"^",u"+")
+                    if player.extra_bet > 0:
+                        player.win(self.minimum_bet + player.extra_bet)
+                        ret = reply.replace(u"^",u"+") + " + " + str(player.extra_bet)
+                    else:
+                        player.win(self.minimum_bet)
+                        ret = reply.replace(u"^",u"+")
 
                 if player.name in self.player_passes:
-                    player.lose(self.minimum_bet)
-                    ret = reply.replace(u"^", u"-")
+                    if player.extra_bet > 0:
+                        player.lose(self.minimum_bet + player.extra_bet)
+                        ret = reply.replace("u^",u"-") + " - " + str(player.extra_bet)
+                    else:
+                        player.lose(self.minimum_bet)
+                        ret = reply.replace(u"^", u"-")
+
+            # round if over set any extra bets to 0
+            player.extra_bet = 0
+            player.save()
 
             if ret:
                 full_reply += ret + "\n"
-                player.save()
 
         # change rollers more often
         if not true_pass:
@@ -245,7 +346,9 @@ class Game(walrus.Model):
     def first_roll(self):
         reply = u""
         if not self.roller:
-            self.get_new_roller()
+            print "XXX do not have a roller"
+            roller, message = self.get_new_roller()
+            self.roller = roller
 
         if self.rolls == 0:
             roll = Roll()
@@ -254,10 +357,12 @@ class Game(walrus.Model):
 
             if roll.point in PASS:
                 reply += self.winners_losers()
+                self.save()
                 self.reset_game()
 
             elif roll.point in DO_NOT_PASS:
                 reply += self.winners_losers(true_pass=False)
+                self.save()
                 self.reset_game(new_roller=True)
 
             else:
@@ -293,10 +398,10 @@ class Game(walrus.Model):
 def create_game():
     game = Game.create()
     for name, bank_roll in ADMINS:
-        p = Player.create(name=name, bank_roll=bank_roll)
+        p = Player.create(name=name, bank_roll=bank_roll, extra_bet=0)
         game.players.add(name)
         p.save()
-    roller = random.choice(list(game.players))
+    roller = self.players[0]
     game.roller = roller
     game.save()
 

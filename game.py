@@ -18,6 +18,7 @@ OUTCOMES = {
 
 class Dice(object):
     di = {
+        0: u"□",
         1: u"⚀",
         2: u"⚁",
         3: u"⚂",
@@ -27,7 +28,7 @@ class Dice(object):
     }
 
     def __init__(self, number):
-        numbers = range(1,7)
+        numbers = range(7)
         if number in numbers:
             self.number = number
         else:
@@ -47,6 +48,7 @@ def get_dice_val():
     return Dice(random.choice(choices))
 
 NUMBERS = {
+        0:   u"□",
         1:   u"❶",
         2:   u"❷",
         3:   u"❸",
@@ -63,10 +65,15 @@ NUMBERS = {
 
 
 class Roll(object):
-    def __init__(self):
-        self.di1 = get_dice_val()
-        self.di2 = get_dice_val()
-        self.point = self.di1 + self.di2
+    def __init__(self, point=None):
+        if point is None:
+            self.di1 = get_dice_val()
+            self.di2 = get_dice_val()
+            self.point = self.di1 + self.di2
+        else:
+            self.di1 = Dice(0)
+            self.di2 = Dice(0)
+            self.point = point
 
     def __repr__(self):
         x = str(self.di1).decode("utf8")
@@ -171,7 +178,7 @@ class Game(walrus.Model):
         player.save()
 
         if self.roller() == player_name:
-            self.get_new_roller()
+            self.reset_game(new_roller=True, clear_bets=False)
         return "%s removed from the game" % player_name
 
     def player_choice(self, player_name, choice, extra_bet=None):
@@ -228,57 +235,40 @@ class Game(walrus.Model):
 
         return "derp"
 
-    def reset_game(self, new_roller=False):
+    def reset_game(self, new_roller=False, clear_bets=True):
         print "RESETTING GAME"
-        self.roll = None
         self.game_point = 0
         self.rolls = 0
 
         # reset all players
-        all_players = self.players
+        if clear_bets:
+            for p in self.players:
+                player = Player.load(p)
+                player.extra_bet = 0
+                print "__PLAYER__"
+                print player
+                player.save()
 
-        for p in all_players:
-            player = Player.load(p)
-            player.extra_bet = 0
-            print "__PLAYER__"
-            print player
-            player.save()
-
-            if p in self.player_passes:
-                self.player_passes.remove(p)
-            if p in self.player_do_not_passes:
-                self.player_do_not_passes.remove(p)
+                if p in self.player_passes:
+                    self.player_passes.remove(p)
+                if p in self.player_do_not_passes:
+                    self.player_do_not_passes.remove(p)
 
         if new_roller:
-            new_roller_message = self.get_new_roller()
-            return new_roller_message
+            last_roller = self.players.popleft()
+
+            print "last roller: %s" % last_roller
+            print "players left: %s" % self.players
+
+            # add last roller to end of the list
+            self.players.append(last_roller)
+            print "players now: %s" % self.players
+            new_roller = self.players[0]
+
+            msg = u"{u} is the new roller\n{u} type `!roll` when ready to start a new round.".format(u=new_roller)
+            return msg
+
         return "new round"
-
-
-    def get_new_roller(self):
-        """
-        # we start rolling position at 1 for redis IntegerField
-        if self.rolling_position + 1 > len(self.players):
-            self.rolling_position = 1
-        else:
-            self.rolling_position += 1
-        """
-        last_roller = self.players.popleft()
-        self.players.append(last_roller)
-        new_roller = self.roller()
-        self.players.save()
-        msg = u"{u} is the new roller\n{u} type `!roll` when ready to start a new round.".format(u=new_roller)
-
-        return msg
-
-    def choices(self):
-        msg = u""
-        for p in self.players:
-            msg += str(p).encode("utf8")
-            msg += u"\n"
-
-        msg += u"Before the next roll enter:\n`!p` for PASS\n`!d` for DO NOT PASS"
-        return msg
 
     def crapped(self):
         self.reset_game(new_roller=True)
@@ -344,13 +334,6 @@ class Game(walrus.Model):
             player.extra_bet = 0
             player.save()
 
-            if ret:
-                full_reply += ret + "\n"
-
-        # change rollers more often
-        if not true_pass:
-            new_player_message = self.reset_game(new_roller=True)
-            full_reply += new_player_message + "\n"
         return full_reply
 
 
@@ -377,10 +360,15 @@ class Game(walrus.Model):
                 self.save()
                 reply += u"\nPOINT SET"
             return reply
+        else:
+            raise Exception("not first roll")
 
-    def keep_goin(self):
+    def keep_goin(self, debug_roll=None):
         reply = u""
-        roll = Roll()
+        if not debug_roll:
+            roll = Roll()
+        else:
+            roll = debug_roll
         self.rolls += 1
         reply += str(roll).decode("utf8")
 

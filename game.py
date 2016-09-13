@@ -109,9 +109,9 @@ class Game(walrus.Model):
     game_point = IntegerField(default=0)
     rolling_position = IntegerField(default=1)
     rolls = IntegerField(default=0)
-    roller = TextField()
     player_passes = SetField()
     player_do_not_passes = SetField()
+
 
     def __str__(self):
         players_str = "*players:* " + ",".join(self.players)
@@ -120,12 +120,15 @@ class Game(walrus.Model):
             come_in_str = "*_COME_IN_*"
         if self.rolls >= 1:
             come_in_str += "\n*game point:* " + str(self.game_point)
-        roller_str = "*roller:* " + self.roller
+        roller_str = "*roller:* " + self.roller()
         player_passes_str = "*pass bets:* " + ",".join(self.player_passes)
         player_do_not_passes_str = "*do not pass bets:* " + ",".join(self.player_do_not_passes)
 
         ret = [ players_str, come_in_str, roller_str, player_passes_str, player_do_not_passes_str]
         return "\n".join(ret)
+
+    def roller(self):
+        return self.players[0]
 
     def add_player(self, player_name):
         if player_name in self.players:
@@ -154,7 +157,7 @@ class Game(walrus.Model):
         if player_name not in self.players:
             return "%s was not in the game" % player_name
 
-        if player_name == self.roller and self.game_point is not None \
+        if player_name == self.roller() and self.game_point is not None \
             and self.game_point > 0:
             return "%s cannot leave the game while an active roller" % player_name
 
@@ -167,7 +170,7 @@ class Game(walrus.Model):
         player.extra_bet = 0
         player.save()
 
-        if self.roller == player_name:
+        if self.roller() == player_name:
             self.get_new_roller()
         return "%s removed from the game" % player_name
 
@@ -247,22 +250,26 @@ class Game(walrus.Model):
                 self.player_do_not_passes.remove(p)
 
         if new_roller:
-            new_roller, new_roller_message = self.get_new_roller()
-            self.roller = new_roller
+            new_roller_message = self.get_new_roller()
             return new_roller_message
         return "new round"
 
 
     def get_new_roller(self):
+        """
         # we start rolling position at 1 for redis IntegerField
         if self.rolling_position + 1 > len(self.players):
             self.rolling_position = 1
         else:
             self.rolling_position += 1
+        """
+        last_roller = self.players.popleft()
+        self.players.append(last_roller)
+        new_roller = self.roller()
+        self.players.save()
+        msg = u"{u} is the new roller\n{u} type `!roll` when ready to start a new round.".format(u=new_roller)
 
-        player = self.players[self.rolling_position - 1]
-        msg = u"@{u} is the new roller\n{u} type `!roll` when ready to start a new round.".format(u=player)
-        return (player, msg)
+        return msg
 
     def choices(self):
         msg = u""
@@ -293,41 +300,45 @@ class Game(walrus.Model):
             player_name = str(player_name)
             player = Player.load(player_name)
             ret = None
-            reply = str(player) + ' ^ ' + str(self.minimum_bet)
+            reply = str(player) + "{operation}" + str(self.minimum_bet)
 
             if true_pass:
                 if player.name in self.player_passes:
+                    reply = reply.format(operation="+")
                     if player.extra_bet > 0:
                         player.win(self.minimum_bet + player.extra_bet)
-                        ret = reply.replace(u"^",u"+") + " + " + str(player.extra_bet)
+                        ret = reply + " +" + str(player.extra_bet)
                     else:
                         player.win(self.minimum_bet)
-                        ret = reply.replace(u"^",u"+")
+                        ret = reply
 
                 if player.name in self.player_do_not_passes:
+                    reply = reply.format(operation="-")
                     if player.extra_bet > 0:
                         player.lose(self.minimum_bet + player.extra_bet)
-                        ret = reply.replace(u"^",u"-") + " - " + str(player.extra_bet)
+                        ret = reply + " -" + str(player.extra_bet)
                     else:
                         player.lose(self.minimum_bet)
-                        ret = reply.replace(u"^",u"-")
+                        ret = reply
 
             if not true_pass:
                 if player.name in self.player_do_not_passes:
+                    reply = reply.format(operation="+")
                     if player.extra_bet > 0:
                         player.win(self.minimum_bet + player.extra_bet)
-                        ret = reply.replace(u"^",u"+") + " + " + str(player.extra_bet)
+                        ret = reply + " +" + str(player.extra_bet)
                     else:
                         player.win(self.minimum_bet)
-                        ret = reply.replace(u"^",u"+")
+                        ret = reply
 
                 if player.name in self.player_passes:
+                    reply = reply.format(operation="-")
                     if player.extra_bet > 0:
                         player.lose(self.minimum_bet + player.extra_bet)
-                        ret = reply.replace("u^",u"-") + " - " + str(player.extra_bet)
+                        ret = reply + " -" + str(player.extra_bet)
                     else:
                         player.lose(self.minimum_bet)
-                        ret = reply.replace(u"^", u"-")
+                        ret = reply
 
             # round if over set any extra bets to 0
             player.extra_bet = 0
@@ -345,10 +356,6 @@ class Game(walrus.Model):
 
     def first_roll(self):
         reply = u""
-        if not self.roller:
-            print "XXX do not have a roller"
-            roller, message = self.get_new_roller()
-            self.roller = roller
 
         if self.rolls == 0:
             roll = Roll()
@@ -390,10 +397,6 @@ class Game(walrus.Model):
             return reply
         else:
             return reply
-
-    def who_is_roller(self):
-        return u"@{} is currently rolling".format(self.roller)
-
 
 def create_game():
     game = Game.create()

@@ -162,7 +162,8 @@ def create_app():
         ret = "nothing"
         if g.auth:
             current_game = game.Game.load(1)
-            if str(g.user_name) == str(current_game.roller):
+            roller = current_game.roller()
+            if str(g.user_name) == str(roller):
                 print "valid roller"
                 if current_game.rolls == 0:
                     print "first roll"
@@ -170,9 +171,8 @@ def create_app():
                 else:
                     rolled = current_game.keep_goin()
                 send = payload(rolled)
-                if rolled:
-                    current_game.save()
-                    ret = "valid roll"
+                current_game.save()
+                ret = "valid roll"
         return ret
 
     return app

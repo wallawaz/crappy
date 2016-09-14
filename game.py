@@ -182,58 +182,75 @@ class Game(walrus.Model):
         return "%s removed from the game" % player_name
 
     def player_choice(self, player_name, choice, extra_bet=None):
+        add_msg = None
+
         if player_name not in self.players:
             return "@{pn} please join the game to make a bet".format(pn=player_name)
 
-        if choice == "!p":
-            bet = "*pass*"
-            if player_name not in self.player_do_not_passes:
-
-                if player_name in self.player_passes:
-                    if extra_bet:
-                        player = Player.load(player_name)
-                        player.extra_bet += extra_bet
-                        player.save()
-                        return "{pn} added {x} to their bet".format(pn=player_name, x=extra_bet)
-
-                    else:
-                        return "{pn} already made {bet} bet".format(pn=player_name, bet=bet)
-
-                self.player_passes.add(player_name)
-
-                if len(self.player_passes) == 1:
-                    return "{pn} made the first {bet} bet".format(pn=player_name, bet=bet)
-                else:
-                    pass_members = ",".join(self.player_passes)
-                    return "{pn} joined ({m}) in making a {bet} bet".format(pn=player_name, m=pass_members, bet=bet)
+        if extra_bet:
+            player = Player.load(player_name)
+            player_current_bets = self.minimum_bet + player.extra_bet + extra_bet
+            if player_current_bets > player.bank_roll:
+                return "{pn} cannot bet {x}, {pn} only has {bank}".format(
+                                                pn=player_name,
+                                                x=extra_bet,
+                                                bank=player.bank_roll)
             else:
-                return "{pn} already chose _do_not_pass_".format(pn=player_name)
+                player.extra_bet += extra_bet
+                player.save()
+                add_msg = "{pn} added {x} to their bet".format(pn=player_name, x=extra_bet)
 
-        if choice == "!d":
-            bet = "*do not pass*"
-            if player_name not in self.player_passes:
+        def _player_choice(player_name, choice, add_msg=None):
+            already_made_that_bet = "{pn} already made a {bet} bet"
+            first_bet = "{pn} made the first {bet} bet"
+            choices = {
+                "!p": "*pass*",
+                "!d": "*do not pass*",
+            }
+            bet = choices[choice]
+            if bet == "*pass*":
+                bet_in = self.player_passes
+                cannot_bet_in = self.player_do_not_passes
+            if bet == "*do not pass*":
+                bet_in = self.player_do_not_passes
+                cannot_bet_in = self.player_passes
 
-                if player_name in self.player_do_not_passes:
-                    if extra_bet:
-                        player = Player.load(player_name)
-                        player.extra_bet += extra_bet
-                        player.save()
-                        return "{pn} added {x} to their bet".format(pn=player_name, x=extra_bet)
-                    else:
-                        return "{pn} already made {bet} bet".format(pn=player_name, bet=bet)
+            if player_name not in cannot_bet_in:
 
-                self.player_do_not_passes.add(player_name)
+                if player_name in bet_in and not extra_bet:
+                    return already_made_that_bet.format(pn=player_name, bet=bet)
 
-                if len(self.player_do_not_passes) == 1:
-                    return "{pn} made first {bet} bet".format(pn=player_name, bet=bet)
-
+                if len(bet_in) == 0:
+                    msg = first_bet.format(pn=player_name, bet=bet)
                 else:
-                    do_not_pass_members = ",".join(self.do_not_pass_members)
-                    return "{pn} joined ({m}) in making a {bet} bet".format(pn=player_name, m=do_not_pass_members, bet=bet)
-            else:
-                return "{pn} already chose _pass_".format(pn=player_name)
+                    other_bets = [ b for b in list(bet_in) if b != player_name ]
+                    if len(other_bets) == 0:
+                        msg = ""
+                    elif len(other_bets) == 1:
+                        msg = "{pn} joined {m} in making a {bet} bet".format(
+                                                                    pn=player_name,
+                                                                    m=other_bets[0],
+                                                                    bet=bet)
+                    else:
+                        msg = "{pn} joined ({m}) in making a {bet} bet".format(pn=player_name,
+                                                                                m=",".join(other_bets),
+                                                                                bet=bet)
+                if bet == "*pass*":
+                    self.player_passes.add(player_name)
+                if bet == "*do not pass*":
+                    self.player_do_not_passes.add(player_name)
 
-        return "derp"
+                if add_msg and msg:
+                    msg += "\n" + "and " + add_msg
+                if add_msg and not msg:
+                    msg = add_msg
+                return msg
+
+            else:
+                return "{pn} already chose {bet}".format(pn=player_name,
+                                                         bet=bet)
+
+        return _player_choice(player_name, choice, add_msg=add_msg)
 
     def reset_game(self, new_roller=False, clear_bets=True):
         print "RESETTING GAME"
@@ -315,7 +332,7 @@ class Game(walrus.Model):
                         player.lose(self.minimum_bet)
                         ret = reply
 
-            if not true_pass:
+            if true_pass == False:
                 if player.name in self.player_do_not_passes:
                     reply = reply.format(operation="+")
                     if player.extra_bet > 0:
@@ -337,33 +354,36 @@ class Game(walrus.Model):
             # round if over set any extra bets to 0
             player.extra_bet = 0
             player.save()
-            full_reply += ret + "\n"
+            if ret:
+                full_reply += ret + "\n"
 
         return full_reply
 
 
-    def first_roll(self):
+    def first_roll(self, debug_roll=None):
         reply = u""
 
         if self.rolls == 0:
-            roll = Roll()
+            if not debug_roll:
+                roll = Roll()
+            else:
+                roll = debug_roll
             self.rolls += 1
             reply += str(roll).decode("utf8")
 
             if roll.point in PASS:
                 reply += self.winners_losers()
-                self.save()
-                self.reset_game()
+                reply += self.reset_game()
 
             elif roll.point in DO_NOT_PASS:
                 reply += self.winners_losers(true_pass=False)
-                self.save()
-                self.reset_game(new_roller=True)
+                reply += self.reset_game(new_roller=True)
 
             else:
                 self.game_point = int(roll.point)
-                self.save()
                 reply += u"\nPOINT SET"
+
+            self.save()
             return reply
         else:
             raise Exception("not first roll")

@@ -271,12 +271,16 @@ class Game(walrus.Model):
         return "new round"
 
     def crapped(self):
-        self.reset_game(new_roller=True)
-        return u"\n {}".format(OUTCOMES["CRAPPED"])
+        crap_message = u"\n {}".format(OUTCOMES["CRAPPED"])
+        crap_message += u"\n"
+        crap_message += self.reset_game(new_roller=True)
+        return crap_message
 
     def rolled_point(self):
-        self.reset_game(new_roller=False)
-        return u"\n {}".format(OUTCOMES["WIN"])
+        point_message = u"\n {}".format(OUTCOMES["WIN"])
+        point_message += u"\n"
+        point_message += self.reset_game(new_roller=False)
+        return point_message
 
     #def player_check(self):
     #    if self.player.bank_roll < self.minimum_bet:
@@ -333,6 +337,7 @@ class Game(walrus.Model):
             # round if over set any extra bets to 0
             player.extra_bet = 0
             player.save()
+            full_reply += ret + "\n"
 
         return full_reply
 
